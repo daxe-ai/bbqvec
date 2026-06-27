@@ -1,0 +1,75 @@
+# .github/workflows/claude-review.yml
+# Automatically reviews every pull request with Claude Code and submits a
+# GitHub review verdict (Approve or Request changes). Runs on GitHub's cloud
+# runners — no local machine required.
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+# Only one review per PR at a time; cancel stale runs when new commits land.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Skip drafts; review once they're marked ready.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Authenticates with your Claude Max subscription.
+          # Generate locally with `claude setup-token` and store as a secret.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # To post the verdict AS YOUR ACCOUNT and reliably allow Approve,
+          # set REVIEWER_TOKEN to a PAT with `pull-requests:write` and pass it
+          # here. If you leave this out, the review is posted by the
+          # github-actions bot and `--approve` may be blocked by the org's
+          # "Allow GitHub Actions to approve pull requests" setting.
+          # github_token: ${{ secrets.REVIEWER_TOKEN }}
+
+          prompt: |
+            You are reviewing a GitHub pull request.
+
+            Repository: ${{ github.repository }}
+            PR number:  ${{ github.event.pull_request.number }}
+
+            1. Read the PR diff and the surrounding code. Look for bugs,
+               security issues, regressions, broken edge cases, and any
+               deviations from the project's CLAUDE.md conventions.
+            2. Post specific, actionable inline feedback on the relevant lines.
+            3. Submit EXACTLY ONE review verdict using the GitHub CLI (gh is
+               already authenticated):
+
+               - If you found issues that should block the merge:
+                 gh pr review ${{ github.event.pull_request.number }} \
+                   --repo ${{ github.repository }} \
+                   --request-changes \
+                   --body "<concise summary of what must change>"
+
+               - If the PR looks good to merge:
+                 gh pr review ${{ github.event.pull_request.number }} \
+                   --repo ${{ github.repository }} \
+                   --approve \
+                   --body "<concise summary of why it's approved>"
+
+            Do not push commits or modify the branch. Review only.
+
+          claude_args: |
+            --allowedTools "Bash(gh:*),Read,Grep,Glob"
+            --max-turns 25
